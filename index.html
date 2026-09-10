@@ -57,9 +57,7 @@
     color:white;
     font-family:monospace;
     font-size:14px;
-
     text-align:center;
-
     pointer-events:none;
   }
 </style>
@@ -115,14 +113,54 @@ let videoPlaying = false;
 
 let currentVideoURL = null;
 
+
+/*
+  MOTION SETTINGS
+*/
+
 let motionThreshold = 45;
 let minBlobPixels = 500;
+
+
+/*
+  LOCK-ON SETTINGS
+
+  A blob must persist for this many
+  consecutive frames before appearing.
+*/
+
+let lockFrames = 3;
+
+
+/*
+  How close a blob must remain to its
+  previous location to count as the
+  same moving object.
+
+  This is measured in analysis pixels.
+*/
+
+let lockDistance = 55;
+
+
+let pendingTracks = [];
+
+
+/*
+  INTERNAL TRACKING RESOLUTION
+*/
 
 let analysisW = 480;
 let analysisH = 360;
 
+
 let blobs = [];
 let trackerHistory = [];
+
+
+/*
+  SONIC COLORS
+*/
 
 let sonicBlue = 225;
 let sonicGold = 48;
@@ -150,6 +188,7 @@ function setup(){
     100
   );
 
+
   haloLayer =
     createGraphics(
       width,
@@ -166,16 +205,6 @@ function setup(){
 
   haloLayer.clear();
 
-
-  /*
-    SMALL INTERNAL ANALYSIS CANVAS
-
-    This is what Sonic Effects
-    uses for motion tracking.
-
-    The original video stays
-    full resolution.
-  */
 
   analysisLayer =
     createGraphics(
@@ -213,6 +242,7 @@ function setup(){
     document.getElementById(
       'videoInput'
     );
+
 
   const playButton =
     document.getElementById(
@@ -276,6 +306,7 @@ function handleVideoFile(event){
   videoPlaying = false;
 
   trackerHistory = [];
+  pendingTracks = [];
 
 
   document.getElementById(
@@ -299,10 +330,6 @@ function handleVideoFile(event){
   vid.hide();
 
 
-  /*
-    IPHONE SETTINGS
-  */
-
   vid.elt.playsInline = true;
 
   vid.elt.setAttribute(
@@ -318,7 +345,6 @@ function handleVideoFile(event){
   vid.elt.muted = true;
   vid.elt.defaultMuted = true;
   vid.elt.volume = 0;
-
   vid.elt.preload = 'auto';
 
 
@@ -348,14 +374,6 @@ function handleVideoFile(event){
 
 function prepareVideo(){
 
-  /*
-    IMPORTANT:
-    DO NOT RESIZE THE VIDEO.
-
-    We keep the source
-    at its native resolution.
-  */
-
   resetAnalysisBuffers();
 
   videoLoaded = true;
@@ -375,7 +393,7 @@ function prepareVideo(){
 
 
 /*
-  RESET ANALYSIS
+  RESET
 */
 
 function resetAnalysisBuffers(){
@@ -411,16 +429,15 @@ function resetAnalysisBuffers(){
 
   prevFrame.updatePixels();
 
-
   trackerHistory = [];
-
+  pendingTracks = [];
 
   haloLayer.clear();
 }
 
 
 /*
-  PLAY VIDEO
+  PLAY
 */
 
 function startVideoPlayback(){
@@ -434,6 +451,19 @@ function startVideoPlayback(){
 
 
   resetAnalysisBuffers();
+
+
+  /*
+    Replay from beginning if finished.
+  */
+
+  if(
+    vid.elt.ended ||
+    vid.elt.currentTime >= vid.elt.duration
+  ){
+
+    vid.elt.currentTime = 0;
+  }
 
 
   const playPromise =
@@ -501,11 +531,7 @@ function draw(){
 
 
   /*
-    DISPLAY NATIVE-QUALITY VIDEO
-
-    We fit the video into the canvas
-    without changing its internal
-    source resolution.
+    DISPLAY FULL-QUALITY VIDEO
   */
 
   drawVideoCover();
@@ -521,8 +547,8 @@ function draw(){
 
 
   /*
-    CREATE LOW-RES COPY
-    ONLY FOR TRACKING
+    CREATE SMALL COPY
+    FOR TRACKING ONLY
   */
 
   analysisLayer.clear();
@@ -566,16 +592,18 @@ function draw(){
     i += 4
   ){
 
-    let d = dist(
+    let d =
+      dist(
 
-      analysisFrame.pixels[i],
-      analysisFrame.pixels[i+1],
-      analysisFrame.pixels[i+2],
+        analysisFrame.pixels[i],
+        analysisFrame.pixels[i+1],
+        analysisFrame.pixels[i+2],
 
-      prevFrame.pixels[i],
-      prevFrame.pixels[i+1],
-      prevFrame.pixels[i+2]
-    );
+        prevFrame.pixels[i],
+        prevFrame.pixels[i+1],
+        prevFrame.pixels[i+2]
+
+      );
 
 
     let v =
@@ -584,10 +612,17 @@ function draw(){
       : 0;
 
 
-    diffImg.pixels[i] = v;
-    diffImg.pixels[i+1] = v;
-    diffImg.pixels[i+2] = v;
-    diffImg.pixels[i+3] = 255;
+    diffImg.pixels[i] =
+      v;
+
+    diffImg.pixels[i+1] =
+      v;
+
+    diffImg.pixels[i+2] =
+      v;
+
+    diffImg.pixels[i+3] =
+      255;
   }
 
 
@@ -595,14 +630,24 @@ function draw(){
 
 
   /*
-    FIND BLOBS
+    RAW BLOBS
   */
 
-  blobs =
+  let rawBlobs =
     findBlobs(
       diffImg,
       analysisW,
       analysisH
+    );
+
+
+  /*
+    APPLY 3-FRAME LOCK-ON
+  */
+
+  blobs =
+    applyLockOn(
+      rawBlobs
     );
 
 
@@ -642,11 +687,6 @@ function draw(){
   let centers = [];
 
 
-  /*
-    SCALE ANALYSIS COORDINATES
-    INTO DISPLAY COORDINATES
-  */
-
   let fit =
     getCoverFit();
 
@@ -661,12 +701,6 @@ function draw(){
     let ay =
       (b.minY+b.maxY)/2;
 
-
-    /*
-      Convert analysis-space coordinate
-      back into the native video space
-      and then onto the display canvas.
-    */
 
     let normalizedX =
       ax / analysisW;
@@ -731,6 +765,10 @@ function draw(){
   }
 
 
+  /*
+    GOLD GLOW
+  */
+
   blendMode(ADD);
 
   image(
@@ -741,6 +779,10 @@ function draw(){
 
   blendMode(BLEND);
 
+
+  /*
+    SONIC BLUE MACHINE VISION
+  */
 
   drawConnectorLines(
     centers
@@ -758,7 +800,7 @@ function draw(){
 
 
   /*
-    SAVE LOW-RES ANALYSIS FRAME
+    SAVE CURRENT ANALYSIS FRAME
   */
 
   prevFrame.copy(
@@ -775,7 +817,7 @@ function draw(){
 
 
   /*
-    VIDEO END
+    END OF VIDEO
   */
 
   if(
@@ -783,6 +825,8 @@ function draw(){
   ){
 
     videoPlaying = false;
+
+    pendingTracks = [];
 
 
     document.getElementById(
@@ -800,8 +844,195 @@ function draw(){
 
 
 /*
-  DRAW VIDEO WITHOUT
-  DESTROYING QUALITY
+  LOCK-ON SYSTEM
+
+  Tracks a raw blob for several
+  frames before allowing it to
+  become visible.
+*/
+
+function applyLockOn(
+  rawBlobs
+){
+
+  let confirmed = [];
+
+  let usedTracks =
+    new Set();
+
+
+  /*
+    Try matching every current blob
+    with an existing pending track.
+  */
+
+  for(
+    let blob of rawBlobs
+  ){
+
+    let bx =
+      (blob.minX +
+       blob.maxX) / 2;
+
+    let by =
+      (blob.minY +
+       blob.maxY) / 2;
+
+
+    let bestIndex =
+      -1;
+
+    let bestDistance =
+      Infinity;
+
+
+    for(
+      let i = 0;
+      i < pendingTracks.length;
+      i++
+    ){
+
+      if(
+        usedTracks.has(i)
+      ){
+        continue;
+      }
+
+
+      let tr =
+        pendingTracks[i];
+
+
+      let d =
+        dist(
+          bx,
+          by,
+          tr.x,
+          tr.y
+        );
+
+
+      if(
+        d < lockDistance &&
+        d < bestDistance
+      ){
+
+        bestDistance =
+          d;
+
+        bestIndex =
+          i;
+      }
+    }
+
+
+    /*
+      EXISTING MOTION CANDIDATE
+    */
+
+    if(
+      bestIndex >= 0
+    ){
+
+      let tr =
+        pendingTracks[
+          bestIndex
+        ];
+
+
+      tr.x = bx;
+      tr.y = by;
+
+      tr.framesSeen++;
+
+      tr.missedFrames = 0;
+
+      tr.blob = blob;
+
+
+      usedTracks.add(
+        bestIndex
+      );
+
+
+      /*
+        Only display after enough
+        consecutive frames.
+      */
+
+      if(
+        tr.framesSeen >=
+        lockFrames
+      ){
+
+        confirmed.push(
+          blob
+        );
+      }
+
+    } else {
+
+
+      /*
+        BRAND-NEW MOTION CANDIDATE
+      */
+
+      pendingTracks.push({
+
+        x:bx,
+        y:by,
+
+        framesSeen:1,
+
+        missedFrames:0,
+
+        blob:blob
+      });
+    }
+  }
+
+
+  /*
+    Age tracks that were not
+    detected this frame.
+  */
+
+  for(
+    let i = 0;
+    i < pendingTracks.length;
+    i++
+  ){
+
+    if(
+      !usedTracks.has(i)
+    ){
+
+      pendingTracks[i]
+        .missedFrames++;
+    }
+  }
+
+
+  /*
+    Remove stale candidates.
+
+    One missed frame is tolerated,
+    which helps avoid tiny flickers.
+  */
+
+  pendingTracks =
+    pendingTracks.filter(
+      track =>
+        track.missedFrames <= 1
+    );
+
+
+  return confirmed;
+}
+
+
+/*
+  HIGH-QUALITY VIDEO DISPLAY
 */
 
 function drawVideoCover(){
@@ -821,10 +1052,7 @@ function drawVideoCover(){
 
 
 /*
-  COVER-FIT CALCULATION
-
-  Keeps aspect ratio and
-  fills the phone screen.
+  COVER-FIT
 */
 
 function getCoverFit(){
@@ -884,18 +1112,19 @@ function getCoverFit(){
   }
 
 
-  let x =
-    (width-drawW)/2;
-
-  let y =
-    (height-drawH)/2;
-
-
   return{
-    x:x,
-    y:y,
-    w:drawW,
-    h:drawH
+
+    x:
+      (width-drawW)/2,
+
+    y:
+      (height-drawH)/2,
+
+    w:
+      drawW,
+
+    h:
+      drawH
   };
 }
 
@@ -1296,7 +1525,7 @@ function drawMotionTails(){
 
 
 /*
-  TRACKER GRAPHICS
+  MACHINE-VISION TRACKERS
 */
 
 function drawTrackers(
@@ -1405,12 +1634,14 @@ function drawTrackers(
 
     strokeWeight(3);
 
+
     line(
       cx-19,
       cy,
       cx+19,
       cy
     );
+
 
     line(
       cx,
@@ -1435,6 +1666,7 @@ function drawTrackers(
 
     strokeWeight(2.5);
 
+
     circle(
       cx,
       cy,
@@ -1454,6 +1686,7 @@ function drawTrackers(
       100,
       100
     );
+
 
     circle(
       cx,
@@ -1515,7 +1748,8 @@ function drawTrackers(
       textWidth(label)+20;
 
 
-    let labelHeight=30;
+    let labelHeight =
+      30;
 
 
     let labelY =
@@ -1787,6 +2021,7 @@ function windowResized(){
 
 
   trackerHistory=[];
+  pendingTracks=[];
 }
 
 </script>
