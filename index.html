@@ -2,16 +2,17 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1" />
 <title>Sonic Effects</title>
 
 <style>
   html,body{
     margin:0;
+    width:100%;
     height:100%;
     background:#000;
     overflow:hidden;
-    font-family:Arial, sans-serif;
+    font-family:Arial,sans-serif;
   }
 
   canvas{
@@ -20,23 +21,46 @@
 
   #ui{
     position:fixed;
-    top:16px;
-    left:16px;
-    z-index:20;
+    top:18px;
+    left:18px;
+    z-index:1000;
   }
 
   #videoInput{
     display:none;
   }
 
-  #chooseBtn{
-    padding:12px 16px;
-    border:none;
+  .sonicButton{
+    display:inline-block;
+    padding:14px 18px;
+    border:2px solid #ffffff;
     border-radius:12px;
-    background:#ffffff;
-    color:#000000;
-    font-weight:bold;
+    background:#1357ff;
+    color:#ffffff;
     font-size:16px;
+    font-weight:bold;
+    cursor:pointer;
+  }
+
+  #playBtn{
+    display:none;
+    margin-left:8px;
+  }
+
+  #status{
+    position:fixed;
+    bottom:18px;
+    left:18px;
+    right:18px;
+    z-index:1000;
+
+    color:white;
+    font-family:monospace;
+    font-size:14px;
+
+    text-align:center;
+
+    pointer-events:none;
   }
 </style>
 
@@ -46,22 +70,47 @@
 <body>
 
 <div id="ui">
-  <label id="chooseBtn" for="videoInput">SELECT VIDEO</label>
+
+  <label
+    id="chooseBtn"
+    class="sonicButton"
+    for="videoInput"
+  >
+    SELECT VIDEO
+  </label>
+
   <input
     id="videoInput"
     type="file"
     accept="video/*"
   />
+
+  <button
+    id="playBtn"
+    class="sonicButton"
+    type="button"
+  >
+    PLAY VIDEO
+  </button>
+
+</div>
+
+<div id="status">
+  Select a video to begin.
 </div>
 
 <script>
 
 let vid;
+
 let prevFrame;
 let diffImg;
 let haloLayer;
 
-let videoReady = false;
+let videoLoaded = false;
+let videoPlaying = false;
+
+let currentVideoURL = null;
 
 let motionThreshold = 45;
 let minBlobPixels = 500;
@@ -72,11 +121,20 @@ let trackerHistory = [];
 let sonicBlue = 225;
 let sonicGold = 48;
 
+
+/*
+  SETUP
+*/
+
 function setup(){
 
-  createCanvas(windowWidth, windowHeight);
+  createCanvas(
+    windowWidth,
+    windowHeight
+  );
 
   pixelDensity(1);
+
   frameRate(60);
 
   colorMode(
@@ -104,80 +162,176 @@ function setup(){
   haloLayer.clear();
 
   textFont('monospace');
+
   textStyle(BOLD);
 
-  let input =
-    document.getElementById('videoInput');
+
+  const input =
+    document.getElementById(
+      'videoInput'
+    );
+
+  const playButton =
+    document.getElementById(
+      'playBtn'
+    );
+
 
   input.addEventListener(
     'change',
     handleVideoFile
   );
+
+
+  playButton.addEventListener(
+    'click',
+    startVideoPlayback
+  );
 }
+
+
+/*
+  VIDEO SELECTION
+*/
 
 function handleVideoFile(event){
 
-  let file =
+  const file =
     event.target.files[0];
 
   if(!file){
     return;
   }
 
-  let url =
-    URL.createObjectURL(file);
+
+  /*
+    REMOVE OLD VIDEO
+  */
 
   if(vid){
+
+    try{
+      vid.pause();
+    }
+    catch(e){}
+
     vid.remove();
+
+    vid = null;
   }
+
+
+  /*
+    RELEASE PREVIOUS OBJECT URL
+  */
+
+  if(currentVideoURL){
+
+    URL.revokeObjectURL(
+      currentVideoURL
+    );
+  }
+
+
+  currentVideoURL =
+    URL.createObjectURL(file);
+
+
+  videoLoaded = false;
+  videoPlaying = false;
+
+  trackerHistory = [];
+
+
+  document.getElementById(
+    'status'
+  ).innerText =
+    'Loading video...';
+
+
+  document.getElementById(
+    'playBtn'
+  ).style.display =
+    'none';
+
+
+  /*
+    CREATE VIDEO
+  */
 
   vid =
     createVideo(
-      [url],
-      videoLoaded
+      currentVideoURL
     );
+
 
   vid.hide();
 
-  vid.attribute(
+
+  /*
+    IMPORTANT IPHONE SETTINGS
+  */
+
+  vid.elt.playsInline = true;
+
+  vid.elt.setAttribute(
     'playsinline',
     ''
   );
 
-  vid.attribute(
+  vid.elt.setAttribute(
     'webkit-playsinline',
     ''
   );
 
-  vid.volume(0);
-
   vid.elt.muted = true;
 
-  vid.elt.controls = false;
+  vid.elt.defaultMuted = true;
 
-  vid.elt.addEventListener(
-    'ended',
-    () => {
-      vid.time(0);
-      vid.play();
-    }
-  );
+  vid.elt.volume = 0;
 
-  document.getElementById(
-    'chooseBtn'
-  ).style.opacity = '0.35';
-}
+  vid.elt.preload = 'auto';
 
-function videoLoaded(){
 
   /*
-    INTERNAL PROCESSING SIZE
-
-    Keeps tracking fast enough
-    while still looking clean.
+    WHEN METADATA IS READY
   */
 
-  vid.size(480,360);
+  vid.elt.addEventListener(
+    'loadedmetadata',
+    prepareVideo,
+    {once:true}
+  );
+
+
+  /*
+    VIDEO ERROR
+  */
+
+  vid.elt.addEventListener(
+    'error',
+    function(){
+
+      document.getElementById(
+        'status'
+      ).innerText =
+        'Video could not load. Try another video format.';
+    }
+  );
+}
+
+
+/*
+  PREPARE VIDEO
+*/
+
+function prepareVideo(){
+
+  vid.size(
+    480,
+    360
+  );
+
 
   prevFrame =
     createImage(
@@ -185,51 +339,194 @@ function videoLoaded(){
       360
     );
 
+
   diffImg =
     createImage(
       480,
       360
     );
 
+
+  /*
+    CLEAR PREVIOUS FRAME
+  */
+
+  prevFrame.loadPixels();
+
+  for(
+    let i = 0;
+    i < prevFrame.pixels.length;
+    i += 4
+  ){
+
+    prevFrame.pixels[i] = 0;
+    prevFrame.pixels[i+1] = 0;
+    prevFrame.pixels[i+2] = 0;
+    prevFrame.pixels[i+3] = 255;
+  }
+
+  prevFrame.updatePixels();
+
+
   trackerHistory = [];
 
-  videoReady = true;
+  videoLoaded = true;
 
-  vid.play();
+
+  document.getElementById(
+    'status'
+  ).innerText =
+    'Video ready. Tap PLAY VIDEO.';
+
+
+  document.getElementById(
+    'playBtn'
+  ).style.display =
+    'inline-block';
 }
+
+
+/*
+  START VIDEO
+
+  This function is triggered
+  directly by the user's tap.
+  Much more reliable on iPhone.
+*/
+
+function startVideoPlayback(){
+
+  if(
+    !vid ||
+    !videoLoaded
+  ){
+    return;
+  }
+
+
+  const playPromise =
+    vid.elt.play();
+
+
+  if(
+    playPromise !== undefined
+  ){
+
+    playPromise
+      .then(() => {
+
+        videoPlaying = true;
+
+        document.getElementById(
+          'playBtn'
+        ).style.display =
+          'none';
+
+
+        document.getElementById(
+          'chooseBtn'
+        ).style.opacity =
+          '0.35';
+
+
+        document.getElementById(
+          'status'
+        ).innerText =
+          '';
+
+      })
+
+      .catch(error => {
+
+        console.log(error);
+
+        document.getElementById(
+          'status'
+        ).innerText =
+          'Tap PLAY VIDEO again.';
+      });
+  }
+}
+
+
+/*
+  MAIN LOOP
+*/
 
 function draw(){
 
   background(0);
 
+
   if(
-    !videoReady ||
+    !videoLoaded ||
     !vid
   ){
 
     drawStartScreen();
+
     return;
   }
 
-  blobs = [];
 
-  vid.loadPixels();
-  prevFrame.loadPixels();
+  /*
+    SHOW VIDEO EVEN BEFORE PLAYBACK
+  */
+
+  image(
+    vid,
+    0,
+    0,
+    width,
+    height
+  );
+
+
+  /*
+    DON'T TRACK UNTIL VIDEO PLAYS
+  */
 
   if(
-    vid.pixels.length > 0 &&
-    prevFrame.pixels.length > 0
+    !videoPlaying ||
+    vid.elt.paused
   ){
 
-    diffImg.loadPixels();
+    return;
+  }
 
-    for(
-      let i = 0;
-      i < vid.pixels.length;
-      i += 4
-    ){
 
-      let d = dist(
+  blobs = [];
+
+
+  vid.loadPixels();
+
+  prevFrame.loadPixels();
+
+
+  if(
+    vid.pixels.length === 0 ||
+    prevFrame.pixels.length === 0
+  ){
+
+    return;
+  }
+
+
+  diffImg.loadPixels();
+
+
+  /*
+    FRAME DIFFERENCE
+  */
+
+  for(
+    let i = 0;
+    i < vid.pixels.length;
+    i += 4
+  ){
+
+    let d =
+      dist(
 
         vid.pixels[i],
         vid.pixels[i+1],
@@ -238,201 +535,235 @@ function draw(){
         prevFrame.pixels[i],
         prevFrame.pixels[i+1],
         prevFrame.pixels[i+2]
-      );
 
-      let v =
-        d > motionThreshold
-        ? 255
-        : 0;
-
-      diffImg.pixels[i]   = v;
-      diffImg.pixels[i+1] = v;
-      diffImg.pixels[i+2] = v;
-      diffImg.pixels[i+3] = 255;
-    }
-
-    diffImg.updatePixels();
-
-
-    /*
-      VIDEO DISPLAY
-    */
-
-    image(
-      vid,
-      0,
-      0,
-      width,
-      height
-    );
-
-
-    /*
-      FIND MOTION BLOBS
-    */
-
-    blobs =
-      findBlobs(
-        diffImg,
-        480,
-        360
       );
 
 
-    /*
-      GOLD HALO FADE
-    */
+    let v =
+      d > motionThreshold
+      ? 255
+      : 0;
 
-    haloLayer.fill(
-      0,
-      0,
-      0,
-      62
+
+    diffImg.pixels[i] =
+      v;
+
+    diffImg.pixels[i+1] =
+      v;
+
+    diffImg.pixels[i+2] =
+      v;
+
+    diffImg.pixels[i+3] =
+      255;
+  }
+
+
+  diffImg.updatePixels();
+
+
+  /*
+    FIND BLOBS
+  */
+
+  blobs =
+    findBlobs(
+      diffImg,
+      480,
+      360
     );
 
-    haloLayer.noStroke();
 
-    haloLayer.rect(
-      0,
-      0,
-      width,
-      height
-    );
+  /*
+    GOLD HALO FADE
+  */
+
+  haloLayer.fill(
+    0,
+    0,
+    0,
+    62
+  );
+
+  haloLayer.noStroke();
+
+  haloLayer.rect(
+    0,
+    0,
+    width,
+    height
+  );
 
 
-    let t =
-      millis()/1000;
-
-    let pulse =
-      (sin(t * 1.2) + 1) / 2;
-
-    let centers = [];
+  const t =
+    millis()/1000;
 
 
-    for(
-      let i = 0;
-      i < blobs.length;
-      i++
-    ){
+  const pulse =
+    (
+      sin(
+        t * 1.2
+      ) + 1
+    ) / 2;
 
-      let b =
-        blobs[i];
 
-      let cx = map(
-        (b.minX + b.maxX)/2,
+  let centers = [];
+
+
+  for(
+    let b of blobs
+  ){
+
+    let cx =
+      map(
+        (b.minX+b.maxX)/2,
         0,
         480,
         0,
         width
       );
 
-      let cy = map(
-        (b.minY + b.maxY)/2,
+
+    let cy =
+      map(
+        (b.minY+b.maxY)/2,
         0,
         360,
         0,
         height
       );
 
-      centers.push({
-        x:cx,
-        y:cy
-      });
+
+    centers.push({
+      x:cx,
+      y:cy
+    });
 
 
-      let goldHue =
-        sonicGold +
-        sin(
-          t * 0.7 +
-          b.minX * 0.04
-        ) * 6;
+    let goldHue =
+      sonicGold +
+
+      sin(
+        t * 0.7 +
+        b.minX * 0.04
+      ) * 6;
 
 
-      let haloSize =
-        map(
-          b.count,
-          minBlobPixels,
-          3000,
-          43,
-          100
-        );
-
-      haloSize =
-        constrain(
-          haloSize,
-          43,
-          100
-        );
-
-
-      drawGoldHalo(
-        haloLayer,
-        cx,
-        cy,
-        haloSize,
-        goldHue,
-        pulse
+    let haloSize =
+      map(
+        b.count,
+        minBlobPixels,
+        3000,
+        43,
+        100
       );
-    }
 
 
-    /*
-      SOFT GOLD GLOW
-    */
+    haloSize =
+      constrain(
+        haloSize,
+        43,
+        100
+      );
 
-    blendMode(ADD);
 
-    image(
+    drawGoldHalo(
       haloLayer,
-      0,
-      0
+      cx,
+      cy,
+      haloSize,
+      goldHue,
+      pulse
     );
-
-    blendMode(BLEND);
-
-
-    /*
-      SONIC BLUE MACHINE VISION
-    */
-
-    drawConnectorLines(
-      centers
-    );
-
-    updateTrackerHistory(
-      centers
-    );
-
-    drawMotionTails();
-
-    drawTrackers();
+  }
 
 
-    /*
-      SAVE CURRENT VIDEO FRAME
-    */
+  /*
+    GOLD GLOW
+  */
 
-    prevFrame.copy(
-      vid,
-      0,
-      0,
-      480,
-      360,
-      0,
-      0,
-      480,
-      360
-    );
+  blendMode(ADD);
+
+  image(
+    haloLayer,
+    0,
+    0
+  );
+
+  blendMode(BLEND);
+
+
+  /*
+    SONIC BLUE MACHINE VISION
+  */
+
+  drawConnectorLines(
+    centers
+  );
+
+  updateTrackerHistory(
+    centers
+  );
+
+  drawMotionTails();
+
+  drawTrackers();
+
+
+  /*
+    SAVE FRAME
+  */
+
+  prevFrame.copy(
+    vid,
+    0,
+    0,
+    480,
+    360,
+    0,
+    0,
+    480,
+    360
+  );
+
+
+  /*
+    RESTART AT END
+  */
+
+  if(
+    vid.elt.ended
+  ){
+
+    vid.elt.currentTime = 0;
+
+    videoPlaying = false;
+
+
+    document.getElementById(
+      'playBtn'
+    ).style.display =
+      'inline-block';
+
+
+    document.getElementById(
+      'status'
+    ).innerText =
+      'Video finished. Tap PLAY VIDEO to replay.';
   }
 }
 
-function drawStartScreen(){
 
-  background(0);
+/*
+  START SCREEN
+*/
+
+function drawStartScreen(){
 
   fill(
     0,
     0,
+    100,
     100
   );
 
@@ -448,12 +779,14 @@ function drawStartScreen(){
   text(
     'SONIC EFFECTS',
     width/2,
-    height/2 - 20
+    height/2 - 25
   );
+
 
   fill(
     sonicBlue,
-    90,
+    100,
+    100,
     100
   );
 
@@ -468,7 +801,7 @@ function drawStartScreen(){
 
 
 /*
-  GOLD ENERGY HALO
+  GOLD HALO
 */
 
 function drawGoldHalo(
@@ -523,8 +856,8 @@ function drawGoldHalo(
 
 
   for(
-    let i = 0;
-    i < 3;
+    let i=0;
+    i<3;
     i++
   ){
 
@@ -537,12 +870,14 @@ function drawGoldHalo(
         16
       );
 
+
     layer.stroke(
       goldHue,
       92,
       100,
       alpha
     );
+
 
     layer.strokeWeight(
       map(
@@ -554,19 +889,21 @@ function drawGoldHalo(
       )
     );
 
+
     let ringSize =
       r *
       (
         1 +
-        0.018 *
-        pulse
+        0.018*pulse
       );
+
 
     layer.circle(
       0,
       0,
-      ringSize * 2
+      ringSize*2
     );
+
 
     r *= 0.86;
   }
@@ -574,9 +911,10 @@ function drawGoldHalo(
 
   layer.noStroke();
 
+
   for(
-    let i = 0;
-    i < 8;
+    let i=0;
+    i<8;
     i++
   ){
 
@@ -585,16 +923,10 @@ function drawGoldHalo(
       i/8 +
       millis()/2500;
 
+
     let orbit =
-      r * 1.48;
+      r*1.48;
 
-    let px =
-      cos(a) *
-      orbit;
-
-    let py =
-      sin(a) *
-      orbit;
 
     layer.fill(
       goldHue,
@@ -603,19 +935,21 @@ function drawGoldHalo(
       30
     );
 
+
     layer.circle(
-      px,
-      py,
+      cos(a)*orbit,
+      sin(a)*orbit,
       2.5
     );
   }
+
 
   layer.pop();
 }
 
 
 /*
-  BLUE CONNECTION NETWORK
+  BLUE CONNECTIONS
 */
 
 function drawConnectorLines(
@@ -628,6 +962,7 @@ function drawConnectorLines(
     return;
   }
 
+
   stroke(
     sonicBlue,
     95,
@@ -639,8 +974,8 @@ function drawConnectorLines(
 
 
   for(
-    let i = 0;
-    i < centers.length - 1;
+    let i=0;
+    i<centers.length-1;
     i++
   ){
 
@@ -656,16 +991,18 @@ function drawConnectorLines(
       (
         centers[i].x +
         centers[i+1].x
-      ) / 2;
+      )/2;
+
 
     let my =
       (
         centers[i].y +
         centers[i+1].y
-      ) / 2;
+      )/2;
 
 
     noStroke();
+
 
     fill(
       sonicBlue,
@@ -673,6 +1010,7 @@ function drawConnectorLines(
       100,
       100
     );
+
 
     circle(
       mx,
@@ -687,6 +1025,7 @@ function drawConnectorLines(
       100,
       100
     );
+
 
     circle(
       mx,
@@ -724,16 +1063,18 @@ function updateTrackerHistory(
     )
   );
 
+
   if(
     trackerHistory.length > 7
   ){
+
     trackerHistory.shift();
   }
 }
 
 
 /*
-  MOTION TRAILS
+  BLUE MOVEMENT TRAILS
 */
 
 function drawMotionTails(){
@@ -746,26 +1087,29 @@ function drawMotionTails(){
 
 
   for(
-    let frame = 1;
-    frame < trackerHistory.length;
+    let frame=1;
+    frame<trackerHistory.length;
     frame++
   ){
 
     let previous =
       trackerHistory[
-        frame - 1
+        frame-1
       ];
+
 
     let current =
       trackerHistory[
         frame
       ];
 
+
     let count =
       min(
         previous.length,
         current.length
       );
+
 
     let alpha =
       map(
@@ -784,12 +1128,13 @@ function drawMotionTails(){
       alpha
     );
 
+
     strokeWeight(2.5);
 
 
     for(
-      let i = 0;
-      i < count;
+      let i=0;
+      i<count;
       i++
     ){
 
@@ -805,7 +1150,7 @@ function drawMotionTails(){
 
 
 /*
-  TRACKER GRAPHICS
+  MACHINE VISION TRACKERS
 */
 
 function drawTrackers(){
@@ -816,16 +1161,17 @@ function drawTrackers(){
 
     let cx =
       map(
-        (b.minX + b.maxX)/2,
+        (b.minX+b.maxX)/2,
         0,
         480,
         0,
         width
       );
 
+
     let cy =
       map(
-        (b.minY + b.maxY)/2,
+        (b.minY+b.maxY)/2,
         0,
         360,
         0,
@@ -842,6 +1188,7 @@ function drawTrackers(){
         185
       );
 
+
     side =
       constrain(
         side,
@@ -849,12 +1196,13 @@ function drawTrackers(){
         185
       );
 
+
     let half =
       side/2;
 
 
     /*
-      SONIC BLUE TRACKER BOX
+      BLUE BOX
     */
 
     stroke(
@@ -878,11 +1226,10 @@ function drawTrackers(){
 
 
     /*
-      WHITE CORNER BRACKETS
+      WHITE CORNERS
     */
 
-    let corner =
-      19;
+    let corner=19;
 
     stroke(
       0,
@@ -894,64 +1241,17 @@ function drawTrackers(){
     strokeWeight(4);
 
 
-    line(
-      cx-half,
-      cy-half,
-      cx-half+corner,
-      cy-half
-    );
+    line(cx-half,cy-half,cx-half+corner,cy-half);
+    line(cx-half,cy-half,cx-half,cy-half+corner);
 
-    line(
-      cx-half,
-      cy-half,
-      cx-half,
-      cy-half+corner
-    );
+    line(cx+half,cy-half,cx+half-corner,cy-half);
+    line(cx+half,cy-half,cx+half,cy-half+corner);
 
+    line(cx-half,cy+half,cx-half+corner,cy+half);
+    line(cx-half,cy+half,cx-half,cy+half-corner);
 
-    line(
-      cx+half,
-      cy-half,
-      cx+half-corner,
-      cy-half
-    );
-
-    line(
-      cx+half,
-      cy-half,
-      cx+half,
-      cy-half+corner
-    );
-
-
-    line(
-      cx-half,
-      cy+half,
-      cx-half+corner,
-      cy+half
-    );
-
-    line(
-      cx-half,
-      cy+half,
-      cx-half,
-      cy+half-corner
-    );
-
-
-    line(
-      cx+half,
-      cy+half,
-      cx+half-corner,
-      cy+half
-    );
-
-    line(
-      cx+half,
-      cy+half,
-      cx+half,
-      cy+half-corner
-    );
+    line(cx+half,cy+half,cx+half-corner,cy+half);
+    line(cx+half,cy+half,cx+half,cy+half-corner);
 
 
     /*
@@ -983,7 +1283,7 @@ function drawTrackers(){
 
 
     /*
-      WHITE TARGET RING
+      WHITE TARGET
     */
 
     noFill();
@@ -1005,7 +1305,7 @@ function drawTrackers(){
 
 
     /*
-      GOLD CENTER DOT
+      GOLD DOT
     */
 
     noStroke();
@@ -1037,6 +1337,7 @@ function drawTrackers(){
 
     strokeWeight(4);
 
+
     let scanY =
       cy +
       sin(
@@ -1044,6 +1345,7 @@ function drawTrackers(){
       ) *
       half *
       0.65;
+
 
     line(
       cx-half+10,
@@ -1060,6 +1362,7 @@ function drawTrackers(){
     let label =
       `(${int(cx)}, ${int(cy)})`;
 
+
     textAlign(
       CENTER,
       CENTER
@@ -1069,11 +1372,13 @@ function drawTrackers(){
 
     textStyle(BOLD);
 
-    let labelWidth =
-      textWidth(label) + 20;
 
-    let labelHeight =
-      30;
+    let labelWidth =
+      textWidth(label)+20;
+
+
+    let labelHeight=30;
+
 
     let labelY =
       cy-half-28;
@@ -1087,6 +1392,7 @@ function drawTrackers(){
       0,
       80
     );
+
 
     rect(
       cx-labelWidth/2,
@@ -1108,6 +1414,7 @@ function drawTrackers(){
 
     strokeWeight(2);
 
+
     rect(
       cx-labelWidth/2,
       labelY-labelHeight/2,
@@ -1125,6 +1432,7 @@ function drawTrackers(){
       100,
       100
     );
+
 
     text(
       label,
@@ -1150,25 +1458,28 @@ function findBlobs(
       w*h
     );
 
+
   img.loadPixels();
 
-  let found = [];
+
+  let found=[];
 
 
   for(
-    let y = 0;
-    y < h;
+    let y=0;
+    y<h;
     y++
   ){
 
     for(
-      let x = 0;
-      x < w;
+      let x=0;
+      x<w;
       x++
     ){
 
       let idx =
         x+y*w;
+
 
       let p =
         img.pixels[
@@ -1177,7 +1488,7 @@ function findBlobs(
 
 
       if(
-        p > 128 &&
+        p>128 &&
         !visited[idx]
       ){
 
@@ -1196,11 +1507,13 @@ function findBlobs(
           b.count >
           minBlobPixels
         ){
+
           found.push(b);
         }
       }
     }
   }
+
 
   return found;
 }
@@ -1219,16 +1532,15 @@ function flood(
   h
 ){
 
-  let st =
-    [[x,y]];
+  let st=[[x,y]];
 
-  let minX = x;
-  let maxX = x;
+  let minX=x;
+  let maxX=x;
 
-  let minY = y;
-  let maxY = y;
+  let minY=y;
+  let maxY=y;
 
-  let c = 0;
+  let c=0;
 
 
   while(
@@ -1243,10 +1555,10 @@ function flood(
 
 
     if(
-      cx < 0 ||
-      cy < 0 ||
-      cx >= w ||
-      cy >= h
+      cx<0 ||
+      cy<0 ||
+      cx>=w ||
+      cy>=h
     ){
       continue;
     }
@@ -1274,34 +1586,16 @@ function flood(
     }
 
 
-    vis[idx] = 1;
+    vis[idx]=1;
 
     c++;
 
 
-    minX =
-      min(
-        minX,
-        cx
-      );
+    minX=min(minX,cx);
+    maxX=max(maxX,cx);
 
-    maxX =
-      max(
-        maxX,
-        cx
-      );
-
-    minY =
-      min(
-        minY,
-        cy
-      );
-
-    maxY =
-      max(
-        maxY,
-        cy
-      );
+    minY=min(minY,cy);
+    maxY=max(maxY,cy);
 
 
     st.push(
@@ -1313,7 +1607,7 @@ function flood(
   }
 
 
-  return {
+  return{
     minX,
     maxX,
     minY,
@@ -1324,7 +1618,7 @@ function flood(
 
 
 /*
-  PHONE ROTATION / RESIZE
+  RESIZE / ROTATION
 */
 
 function windowResized(){
@@ -1334,11 +1628,13 @@ function windowResized(){
     windowHeight
   );
 
+
   haloLayer =
     createGraphics(
       width,
       height
     );
+
 
   haloLayer.colorMode(
     HSB,
@@ -1348,9 +1644,11 @@ function windowResized(){
     100
   );
 
+
   haloLayer.clear();
 
-  trackerHistory = [];
+
+  trackerHistory=[];
 }
 
 </script>
