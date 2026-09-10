@@ -113,54 +113,19 @@ let videoPlaying = false;
 
 let currentVideoURL = null;
 
-
-/*
-  MOTION SETTINGS
-*/
-
 let motionThreshold = 45;
 let minBlobPixels = 500;
 
-
-/*
-  LOCK-ON SETTINGS
-
-  A blob must persist for this many
-  consecutive frames before appearing.
-*/
-
 let lockFrames = 3;
-
-
-/*
-  How close a blob must remain to its
-  previous location to count as the
-  same moving object.
-
-  This is measured in analysis pixels.
-*/
-
 let lockDistance = 55;
 
-
 let pendingTracks = [];
-
-
-/*
-  INTERNAL TRACKING RESOLUTION
-*/
 
 let analysisW = 480;
 let analysisH = 360;
 
-
 let blobs = [];
 let trackerHistory = [];
-
-
-/*
-  SONIC COLORS
-*/
 
 let sonicBlue = 225;
 let sonicGold = 48;
@@ -187,7 +152,6 @@ function setup(){
     100,
     100
   );
-
 
   haloLayer =
     createGraphics(
@@ -242,7 +206,6 @@ function setup(){
     document.getElementById(
       'videoInput'
     );
-
 
   const playButton =
     document.getElementById(
@@ -321,6 +284,12 @@ function handleVideoFile(event){
     'none';
 
 
+  document.getElementById(
+    'chooseBtn'
+  ).style.display =
+    'inline-block';
+
+
   vid =
     createVideo(
       currentVideoURL
@@ -329,6 +298,10 @@ function handleVideoFile(event){
 
   vid.hide();
 
+
+  /*
+    IPHONE SETTINGS
+  */
 
   vid.elt.playsInline = true;
 
@@ -342,9 +315,18 @@ function handleVideoFile(event){
     ''
   );
 
+
+  /*
+    LOAD MUTED FOR SAFETY
+
+    Audio is restored when
+    PLAY VIDEO is tapped.
+  */
+
   vid.elt.muted = true;
   vid.elt.defaultMuted = true;
   vid.elt.volume = 0;
+
   vid.elt.preload = 'auto';
 
 
@@ -389,11 +371,17 @@ function prepareVideo(){
     'playBtn'
   ).style.display =
     'inline-block';
+
+
+  document.getElementById(
+    'chooseBtn'
+  ).style.display =
+    'inline-block';
 }
 
 
 /*
-  RESET
+  RESET ANALYSIS
 */
 
 function resetAnalysisBuffers(){
@@ -429,6 +417,7 @@ function resetAnalysisBuffers(){
 
   prevFrame.updatePixels();
 
+
   trackerHistory = [];
   pendingTracks = [];
 
@@ -437,7 +426,7 @@ function resetAnalysisBuffers(){
 
 
 /*
-  PLAY
+  PLAY VIDEO
 */
 
 function startVideoPlayback(){
@@ -454,7 +443,7 @@ function startVideoPlayback(){
 
 
   /*
-    Replay from beginning if finished.
+    REPLAY FROM START IF FINISHED
   */
 
   if(
@@ -464,6 +453,15 @@ function startVideoPlayback(){
 
     vid.elt.currentTime = 0;
   }
+
+
+  /*
+    RESTORE ORIGINAL VIDEO AUDIO
+  */
+
+  vid.elt.muted = false;
+  vid.elt.defaultMuted = false;
+  vid.elt.volume = 1.0;
 
 
   const playPromise =
@@ -480,6 +478,11 @@ function startVideoPlayback(){
         videoPlaying = true;
 
 
+        /*
+          HIDE BOTH BUTTONS
+          DURING PLAYBACK
+        */
+
         document.getElementById(
           'playBtn'
         ).style.display =
@@ -488,8 +491,8 @@ function startVideoPlayback(){
 
         document.getElementById(
           'chooseBtn'
-        ).style.opacity =
-          '0.35';
+        ).style.display =
+          'none';
 
 
         document.getElementById(
@@ -505,6 +508,18 @@ function startVideoPlayback(){
           'status'
         ).innerText =
           'Tap PLAY VIDEO again.';
+
+
+        document.getElementById(
+          'playBtn'
+        ).style.display =
+          'inline-block';
+
+
+        document.getElementById(
+          'chooseBtn'
+        ).style.display =
+          'inline-block';
       });
   }
 }
@@ -531,7 +546,7 @@ function draw(){
 
 
   /*
-    DISPLAY FULL-QUALITY VIDEO
+    FULL-QUALITY VIDEO DISPLAY
   */
 
   drawVideoCover();
@@ -547,8 +562,7 @@ function draw(){
 
 
   /*
-    CREATE SMALL COPY
-    FOR TRACKING ONLY
+    LOW-RES ANALYSIS COPY
   */
 
   analysisLayer.clear();
@@ -612,17 +626,10 @@ function draw(){
       : 0;
 
 
-    diffImg.pixels[i] =
-      v;
-
-    diffImg.pixels[i+1] =
-      v;
-
-    diffImg.pixels[i+2] =
-      v;
-
-    diffImg.pixels[i+3] =
-      255;
+    diffImg.pixels[i] = v;
+    diffImg.pixels[i+1] = v;
+    diffImg.pixels[i+2] = v;
+    diffImg.pixels[i+3] = 255;
   }
 
 
@@ -630,7 +637,7 @@ function draw(){
 
 
   /*
-    RAW BLOBS
+    RAW MOTION BLOBS
   */
 
   let rawBlobs =
@@ -642,7 +649,7 @@ function draw(){
 
 
   /*
-    APPLY 3-FRAME LOCK-ON
+    3-FRAME LOCK-ON
   */
 
   blobs =
@@ -817,7 +824,7 @@ function draw(){
 
 
   /*
-    END OF VIDEO
+    VIDEO END
   */
 
   if(
@@ -829,8 +836,18 @@ function draw(){
     pendingTracks = [];
 
 
+    /*
+      BRING BOTH BUTTONS BACK
+    */
+
     document.getElementById(
       'playBtn'
+    ).style.display =
+      'inline-block';
+
+
+    document.getElementById(
+      'chooseBtn'
     ).style.display =
       'inline-block';
 
@@ -845,10 +862,6 @@ function draw(){
 
 /*
   LOCK-ON SYSTEM
-
-  Tracks a raw blob for several
-  frames before allowing it to
-  become visible.
 */
 
 function applyLockOn(
@@ -860,11 +873,6 @@ function applyLockOn(
   let usedTracks =
     new Set();
 
-
-  /*
-    Try matching every current blob
-    with an existing pending track.
-  */
 
   for(
     let blob of rawBlobs
@@ -926,10 +934,6 @@ function applyLockOn(
     }
 
 
-    /*
-      EXISTING MOTION CANDIDATE
-    */
-
     if(
       bestIndex >= 0
     ){
@@ -955,11 +959,6 @@ function applyLockOn(
       );
 
 
-      /*
-        Only display after enough
-        consecutive frames.
-      */
-
       if(
         tr.framesSeen >=
         lockFrames
@@ -972,10 +971,6 @@ function applyLockOn(
 
     } else {
 
-
-      /*
-        BRAND-NEW MOTION CANDIDATE
-      */
 
       pendingTracks.push({
 
@@ -992,11 +987,6 @@ function applyLockOn(
   }
 
 
-  /*
-    Age tracks that were not
-    detected this frame.
-  */
-
   for(
     let i = 0;
     i < pendingTracks.length;
@@ -1012,13 +1002,6 @@ function applyLockOn(
     }
   }
 
-
-  /*
-    Remove stale candidates.
-
-    One missed frame is tolerated,
-    which helps avoid tiny flickers.
-  */
 
   pendingTracks =
     pendingTracks.filter(
@@ -1052,7 +1035,7 @@ function drawVideoCover(){
 
 
 /*
-  COVER-FIT
+  COVER FIT
 */
 
 function getCoverFit(){
@@ -1422,7 +1405,7 @@ function drawConnectorLines(
 
 
 /*
-  HISTORY
+  TRACKER HISTORY
 */
 
 function updateTrackerHistory(
