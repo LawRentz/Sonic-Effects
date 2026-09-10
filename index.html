@@ -1,0 +1,1359 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Sonic Effects</title>
+
+<style>
+  html,body{
+    margin:0;
+    height:100%;
+    background:#000;
+    overflow:hidden;
+    font-family:Arial, sans-serif;
+  }
+
+  canvas{
+    display:block;
+  }
+
+  #ui{
+    position:fixed;
+    top:16px;
+    left:16px;
+    z-index:20;
+  }
+
+  #videoInput{
+    display:none;
+  }
+
+  #chooseBtn{
+    padding:12px 16px;
+    border:none;
+    border-radius:12px;
+    background:#ffffff;
+    color:#000000;
+    font-weight:bold;
+    font-size:16px;
+  }
+</style>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.3/p5.min.js"></script>
+</head>
+
+<body>
+
+<div id="ui">
+  <label id="chooseBtn" for="videoInput">SELECT VIDEO</label>
+  <input
+    id="videoInput"
+    type="file"
+    accept="video/*"
+  />
+</div>
+
+<script>
+
+let vid;
+let prevFrame;
+let diffImg;
+let haloLayer;
+
+let videoReady = false;
+
+let motionThreshold = 45;
+let minBlobPixels = 500;
+
+let blobs = [];
+let trackerHistory = [];
+
+let sonicBlue = 225;
+let sonicGold = 48;
+
+function setup(){
+
+  createCanvas(windowWidth, windowHeight);
+
+  pixelDensity(1);
+  frameRate(60);
+
+  colorMode(
+    HSB,
+    360,
+    100,
+    100,
+    100
+  );
+
+  haloLayer =
+    createGraphics(
+      width,
+      height
+    );
+
+  haloLayer.colorMode(
+    HSB,
+    360,
+    100,
+    100,
+    100
+  );
+
+  haloLayer.clear();
+
+  textFont('monospace');
+  textStyle(BOLD);
+
+  let input =
+    document.getElementById('videoInput');
+
+  input.addEventListener(
+    'change',
+    handleVideoFile
+  );
+}
+
+function handleVideoFile(event){
+
+  let file =
+    event.target.files[0];
+
+  if(!file){
+    return;
+  }
+
+  let url =
+    URL.createObjectURL(file);
+
+  if(vid){
+    vid.remove();
+  }
+
+  vid =
+    createVideo(
+      [url],
+      videoLoaded
+    );
+
+  vid.hide();
+
+  vid.attribute(
+    'playsinline',
+    ''
+  );
+
+  vid.attribute(
+    'webkit-playsinline',
+    ''
+  );
+
+  vid.volume(0);
+
+  vid.elt.muted = true;
+
+  vid.elt.controls = false;
+
+  vid.elt.addEventListener(
+    'ended',
+    () => {
+      vid.time(0);
+      vid.play();
+    }
+  );
+
+  document.getElementById(
+    'chooseBtn'
+  ).style.opacity = '0.35';
+}
+
+function videoLoaded(){
+
+  /*
+    INTERNAL PROCESSING SIZE
+
+    Keeps tracking fast enough
+    while still looking clean.
+  */
+
+  vid.size(480,360);
+
+  prevFrame =
+    createImage(
+      480,
+      360
+    );
+
+  diffImg =
+    createImage(
+      480,
+      360
+    );
+
+  trackerHistory = [];
+
+  videoReady = true;
+
+  vid.play();
+}
+
+function draw(){
+
+  background(0);
+
+  if(
+    !videoReady ||
+    !vid
+  ){
+
+    drawStartScreen();
+    return;
+  }
+
+  blobs = [];
+
+  vid.loadPixels();
+  prevFrame.loadPixels();
+
+  if(
+    vid.pixels.length > 0 &&
+    prevFrame.pixels.length > 0
+  ){
+
+    diffImg.loadPixels();
+
+    for(
+      let i = 0;
+      i < vid.pixels.length;
+      i += 4
+    ){
+
+      let d = dist(
+
+        vid.pixels[i],
+        vid.pixels[i+1],
+        vid.pixels[i+2],
+
+        prevFrame.pixels[i],
+        prevFrame.pixels[i+1],
+        prevFrame.pixels[i+2]
+      );
+
+      let v =
+        d > motionThreshold
+        ? 255
+        : 0;
+
+      diffImg.pixels[i]   = v;
+      diffImg.pixels[i+1] = v;
+      diffImg.pixels[i+2] = v;
+      diffImg.pixels[i+3] = 255;
+    }
+
+    diffImg.updatePixels();
+
+
+    /*
+      VIDEO DISPLAY
+    */
+
+    image(
+      vid,
+      0,
+      0,
+      width,
+      height
+    );
+
+
+    /*
+      FIND MOTION BLOBS
+    */
+
+    blobs =
+      findBlobs(
+        diffImg,
+        480,
+        360
+      );
+
+
+    /*
+      GOLD HALO FADE
+    */
+
+    haloLayer.fill(
+      0,
+      0,
+      0,
+      62
+    );
+
+    haloLayer.noStroke();
+
+    haloLayer.rect(
+      0,
+      0,
+      width,
+      height
+    );
+
+
+    let t =
+      millis()/1000;
+
+    let pulse =
+      (sin(t * 1.2) + 1) / 2;
+
+    let centers = [];
+
+
+    for(
+      let i = 0;
+      i < blobs.length;
+      i++
+    ){
+
+      let b =
+        blobs[i];
+
+      let cx = map(
+        (b.minX + b.maxX)/2,
+        0,
+        480,
+        0,
+        width
+      );
+
+      let cy = map(
+        (b.minY + b.maxY)/2,
+        0,
+        360,
+        0,
+        height
+      );
+
+      centers.push({
+        x:cx,
+        y:cy
+      });
+
+
+      let goldHue =
+        sonicGold +
+        sin(
+          t * 0.7 +
+          b.minX * 0.04
+        ) * 6;
+
+
+      let haloSize =
+        map(
+          b.count,
+          minBlobPixels,
+          3000,
+          43,
+          100
+        );
+
+      haloSize =
+        constrain(
+          haloSize,
+          43,
+          100
+        );
+
+
+      drawGoldHalo(
+        haloLayer,
+        cx,
+        cy,
+        haloSize,
+        goldHue,
+        pulse
+      );
+    }
+
+
+    /*
+      SOFT GOLD GLOW
+    */
+
+    blendMode(ADD);
+
+    image(
+      haloLayer,
+      0,
+      0
+    );
+
+    blendMode(BLEND);
+
+
+    /*
+      SONIC BLUE MACHINE VISION
+    */
+
+    drawConnectorLines(
+      centers
+    );
+
+    updateTrackerHistory(
+      centers
+    );
+
+    drawMotionTails();
+
+    drawTrackers();
+
+
+    /*
+      SAVE CURRENT VIDEO FRAME
+    */
+
+    prevFrame.copy(
+      vid,
+      0,
+      0,
+      480,
+      360,
+      0,
+      0,
+      480,
+      360
+    );
+  }
+}
+
+function drawStartScreen(){
+
+  background(0);
+
+  fill(
+    0,
+    0,
+    100
+  );
+
+  noStroke();
+
+  textAlign(
+    CENTER,
+    CENTER
+  );
+
+  textSize(30);
+
+  text(
+    'SONIC EFFECTS',
+    width/2,
+    height/2 - 20
+  );
+
+  fill(
+    sonicBlue,
+    90,
+    100
+  );
+
+  textSize(16);
+
+  text(
+    'SELECT A VIDEO TO BEGIN',
+    width/2,
+    height/2 + 25
+  );
+}
+
+
+/*
+  GOLD ENERGY HALO
+*/
+
+function drawGoldHalo(
+  layer,
+  x,
+  y,
+  r,
+  goldHue,
+  pulse
+){
+
+  layer.push();
+
+  layer.translate(
+    x,
+    y
+  );
+
+  layer.noFill();
+
+
+  layer.stroke(
+    goldHue,
+    90,
+    100,
+    8
+  );
+
+  layer.strokeWeight(16);
+
+  layer.circle(
+    0,
+    0,
+    r * 2.08
+  );
+
+
+  layer.stroke(
+    goldHue,
+    90,
+    100,
+    13
+  );
+
+  layer.strokeWeight(8);
+
+  layer.circle(
+    0,
+    0,
+    r * 2.03
+  );
+
+
+  for(
+    let i = 0;
+    i < 3;
+    i++
+  ){
+
+    let alpha =
+      map(
+        i,
+        0,
+        2,
+        58,
+        16
+      );
+
+    layer.stroke(
+      goldHue,
+      92,
+      100,
+      alpha
+    );
+
+    layer.strokeWeight(
+      map(
+        i,
+        0,
+        2,
+        4.5,
+        1.5
+      )
+    );
+
+    let ringSize =
+      r *
+      (
+        1 +
+        0.018 *
+        pulse
+      );
+
+    layer.circle(
+      0,
+      0,
+      ringSize * 2
+    );
+
+    r *= 0.86;
+  }
+
+
+  layer.noStroke();
+
+  for(
+    let i = 0;
+    i < 8;
+    i++
+  ){
+
+    let a =
+      TWO_PI *
+      i/8 +
+      millis()/2500;
+
+    let orbit =
+      r * 1.48;
+
+    let px =
+      cos(a) *
+      orbit;
+
+    let py =
+      sin(a) *
+      orbit;
+
+    layer.fill(
+      goldHue,
+      90,
+      100,
+      30
+    );
+
+    layer.circle(
+      px,
+      py,
+      2.5
+    );
+  }
+
+  layer.pop();
+}
+
+
+/*
+  BLUE CONNECTION NETWORK
+*/
+
+function drawConnectorLines(
+  centers
+){
+
+  if(
+    centers.length < 2
+  ){
+    return;
+  }
+
+  stroke(
+    sonicBlue,
+    95,
+    100,
+    90
+  );
+
+  strokeWeight(3);
+
+
+  for(
+    let i = 0;
+    i < centers.length - 1;
+    i++
+  ){
+
+    line(
+      centers[i].x,
+      centers[i].y,
+      centers[i+1].x,
+      centers[i+1].y
+    );
+
+
+    let mx =
+      (
+        centers[i].x +
+        centers[i+1].x
+      ) / 2;
+
+    let my =
+      (
+        centers[i].y +
+        centers[i+1].y
+      ) / 2;
+
+
+    noStroke();
+
+    fill(
+      sonicBlue,
+      90,
+      100,
+      100
+    );
+
+    circle(
+      mx,
+      my,
+      7
+    );
+
+
+    fill(
+      0,
+      0,
+      100,
+      100
+    );
+
+    circle(
+      mx,
+      my,
+      2.5
+    );
+
+
+    stroke(
+      sonicBlue,
+      95,
+      100,
+      90
+    );
+
+    strokeWeight(3);
+  }
+}
+
+
+/*
+  HISTORY
+*/
+
+function updateTrackerHistory(
+  centers
+){
+
+  trackerHistory.push(
+    centers.map(
+      p => ({
+        x:p.x,
+        y:p.y
+      })
+    )
+  );
+
+  if(
+    trackerHistory.length > 7
+  ){
+    trackerHistory.shift();
+  }
+}
+
+
+/*
+  MOTION TRAILS
+*/
+
+function drawMotionTails(){
+
+  if(
+    trackerHistory.length < 2
+  ){
+    return;
+  }
+
+
+  for(
+    let frame = 1;
+    frame < trackerHistory.length;
+    frame++
+  ){
+
+    let previous =
+      trackerHistory[
+        frame - 1
+      ];
+
+    let current =
+      trackerHistory[
+        frame
+      ];
+
+    let count =
+      min(
+        previous.length,
+        current.length
+      );
+
+    let alpha =
+      map(
+        frame,
+        1,
+        trackerHistory.length-1,
+        15,
+        78
+      );
+
+
+    stroke(
+      sonicBlue,
+      95,
+      100,
+      alpha
+    );
+
+    strokeWeight(2.5);
+
+
+    for(
+      let i = 0;
+      i < count;
+      i++
+    ){
+
+      line(
+        previous[i].x,
+        previous[i].y,
+        current[i].x,
+        current[i].y
+      );
+    }
+  }
+}
+
+
+/*
+  TRACKER GRAPHICS
+*/
+
+function drawTrackers(){
+
+  for(
+    let b of blobs
+  ){
+
+    let cx =
+      map(
+        (b.minX + b.maxX)/2,
+        0,
+        480,
+        0,
+        width
+      );
+
+    let cy =
+      map(
+        (b.minY + b.maxY)/2,
+        0,
+        360,
+        0,
+        height
+      );
+
+
+    let side =
+      map(
+        b.count,
+        minBlobPixels,
+        3000,
+        90,
+        185
+      );
+
+    side =
+      constrain(
+        side,
+        90,
+        185
+      );
+
+    let half =
+      side/2;
+
+
+    /*
+      SONIC BLUE TRACKER BOX
+    */
+
+    stroke(
+      sonicBlue,
+      100,
+      100,
+      100
+    );
+
+    strokeWeight(3.5);
+
+    noFill();
+
+    rect(
+      cx-half,
+      cy-half,
+      side,
+      side,
+      4
+    );
+
+
+    /*
+      WHITE CORNER BRACKETS
+    */
+
+    let corner =
+      19;
+
+    stroke(
+      0,
+      0,
+      100,
+      100
+    );
+
+    strokeWeight(4);
+
+
+    line(
+      cx-half,
+      cy-half,
+      cx-half+corner,
+      cy-half
+    );
+
+    line(
+      cx-half,
+      cy-half,
+      cx-half,
+      cy-half+corner
+    );
+
+
+    line(
+      cx+half,
+      cy-half,
+      cx+half-corner,
+      cy-half
+    );
+
+    line(
+      cx+half,
+      cy-half,
+      cx+half,
+      cy-half+corner
+    );
+
+
+    line(
+      cx-half,
+      cy+half,
+      cx-half+corner,
+      cy+half
+    );
+
+    line(
+      cx-half,
+      cy+half,
+      cx-half,
+      cy+half-corner
+    );
+
+
+    line(
+      cx+half,
+      cy+half,
+      cx+half-corner,
+      cy+half
+    );
+
+    line(
+      cx+half,
+      cy+half,
+      cx+half,
+      cy+half-corner
+    );
+
+
+    /*
+      BLUE CROSSHAIR
+    */
+
+    stroke(
+      sonicBlue,
+      100,
+      100,
+      100
+    );
+
+    strokeWeight(3);
+
+    line(
+      cx-19,
+      cy,
+      cx+19,
+      cy
+    );
+
+    line(
+      cx,
+      cy-19,
+      cx,
+      cy+19
+    );
+
+
+    /*
+      WHITE TARGET RING
+    */
+
+    noFill();
+
+    stroke(
+      0,
+      0,
+      100,
+      100
+    );
+
+    strokeWeight(2.5);
+
+    circle(
+      cx,
+      cy,
+      20
+    );
+
+
+    /*
+      GOLD CENTER DOT
+    */
+
+    noStroke();
+
+    fill(
+      sonicGold,
+      100,
+      100,
+      100
+    );
+
+    circle(
+      cx,
+      cy,
+      8
+    );
+
+
+    /*
+      BLUE SCAN LINE
+    */
+
+    stroke(
+      sonicBlue,
+      100,
+      100,
+      100
+    );
+
+    strokeWeight(4);
+
+    let scanY =
+      cy +
+      sin(
+        millis()/180
+      ) *
+      half *
+      0.65;
+
+    line(
+      cx-half+10,
+      scanY,
+      cx+half-10,
+      scanY
+    );
+
+
+    /*
+      COORDINATES
+    */
+
+    let label =
+      `(${int(cx)}, ${int(cy)})`;
+
+    textAlign(
+      CENTER,
+      CENTER
+    );
+
+    textSize(20);
+
+    textStyle(BOLD);
+
+    let labelWidth =
+      textWidth(label) + 20;
+
+    let labelHeight =
+      30;
+
+    let labelY =
+      cy-half-28;
+
+
+    noStroke();
+
+    fill(
+      0,
+      0,
+      0,
+      80
+    );
+
+    rect(
+      cx-labelWidth/2,
+      labelY-labelHeight/2,
+      labelWidth,
+      labelHeight,
+      3
+    );
+
+
+    noFill();
+
+    stroke(
+      sonicBlue,
+      100,
+      100,
+      100
+    );
+
+    strokeWeight(2);
+
+    rect(
+      cx-labelWidth/2,
+      labelY-labelHeight/2,
+      labelWidth,
+      labelHeight,
+      3
+    );
+
+
+    noStroke();
+
+    fill(
+      0,
+      0,
+      100,
+      100
+    );
+
+    text(
+      label,
+      cx,
+      labelY
+    );
+  }
+}
+
+
+/*
+  BLOB DETECTION
+*/
+
+function findBlobs(
+  img,
+  w,
+  h
+){
+
+  let visited =
+    new Uint8Array(
+      w*h
+    );
+
+  img.loadPixels();
+
+  let found = [];
+
+
+  for(
+    let y = 0;
+    y < h;
+    y++
+  ){
+
+    for(
+      let x = 0;
+      x < w;
+      x++
+    ){
+
+      let idx =
+        x+y*w;
+
+      let p =
+        img.pixels[
+          idx*4
+        ];
+
+
+      if(
+        p > 128 &&
+        !visited[idx]
+      ){
+
+        let b =
+          flood(
+            x,
+            y,
+            visited,
+            img,
+            w,
+            h
+          );
+
+
+        if(
+          b.count >
+          minBlobPixels
+        ){
+          found.push(b);
+        }
+      }
+    }
+  }
+
+  return found;
+}
+
+
+/*
+  FLOOD FILL
+*/
+
+function flood(
+  x,
+  y,
+  vis,
+  img,
+  w,
+  h
+){
+
+  let st =
+    [[x,y]];
+
+  let minX = x;
+  let maxX = x;
+
+  let minY = y;
+  let maxY = y;
+
+  let c = 0;
+
+
+  while(
+    st.length
+  ){
+
+    let [
+      cx,
+      cy
+    ] =
+      st.pop();
+
+
+    if(
+      cx < 0 ||
+      cy < 0 ||
+      cx >= w ||
+      cy >= h
+    ){
+      continue;
+    }
+
+
+    let idx =
+      cx+cy*w;
+
+
+    if(
+      vis[idx]
+    ){
+      continue;
+    }
+
+
+    let p =
+      idx*4;
+
+
+    if(
+      img.pixels[p] <= 128
+    ){
+      continue;
+    }
+
+
+    vis[idx] = 1;
+
+    c++;
+
+
+    minX =
+      min(
+        minX,
+        cx
+      );
+
+    maxX =
+      max(
+        maxX,
+        cx
+      );
+
+    minY =
+      min(
+        minY,
+        cy
+      );
+
+    maxY =
+      max(
+        maxY,
+        cy
+      );
+
+
+    st.push(
+      [cx+1,cy],
+      [cx-1,cy],
+      [cx,cy+1],
+      [cx,cy-1]
+    );
+  }
+
+
+  return {
+    minX,
+    maxX,
+    minY,
+    maxY,
+    count:c
+  };
+}
+
+
+/*
+  PHONE ROTATION / RESIZE
+*/
+
+function windowResized(){
+
+  resizeCanvas(
+    windowWidth,
+    windowHeight
+  );
+
+  haloLayer =
+    createGraphics(
+      width,
+      height
+    );
+
+  haloLayer.colorMode(
+    HSB,
+    360,
+    100,
+    100,
+    100
+  );
+
+  haloLayer.clear();
+
+  trackerHistory = [];
+}
+
+</script>
+
+</body>
+</html>
